@@ -4,4 +4,5 @@ module mod_common
   integer, parameter :: rp = selected_real_kind(15,307)
   integer :: ierr
   integer :: nh = 2
+  real(rp) :: gr = 1.
 end module mod_common

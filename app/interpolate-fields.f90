@@ -1,8 +1,9 @@
   program interpolate_fields
     use mpi_f08
-    use mod_common, only: rp,ierr,nh
-    use mod_bound , only: makehalo,updthalo,set_bc
-    use mod_io    , only: load,load_scal
+    use mod_common  , only: rp,ierr,nh,gr
+    use mod_bound   , only: makehalo,updthalo,set_bc
+    use mod_io      , only: load,load_scal
+    use mod_initgrid, only: initgrid
     implicit none
     !
     ! input domain parameters
@@ -198,19 +199,29 @@
 #ifdef _NON_UNIFORM_Z
     block
       real(rp), allocatable, dimension(:) :: bufi,bufo,zfi_g,zfo_g,zci_g,zco_g, &
-                                                       zfi  ,zfo  ,zci  ,zco
+                                                       zfi,zfo,zci,zco,dzc_g,dzf_g
       integer :: k,kk,rlen
       !
       allocate(bufi(1-nh:ni(3)+nh),bufo(1-nh:no(3)+nh))
       allocate(zci_g(1-nh:ni(3)+nh),zfi_g(1-nh:ni(3)+nh), &
-               zco_g(1-nh:no(3)+nh),zfo_g(1-nh:no(3)+nh))
+               zco_g(1-nh:no(3)+nh),zfo_g(1-nh:no(3)+nh), &
+               dzc_g(1-nh:no(3)+nh),dzf_g(1-nh:no(3)+nh))
+#if !defined(_OUTPUT_GRID)
+      call initgrid('pdc',no(3),gr,l(3),dzc_g,dzf_g,zco_g,zfo_g)
+      if(myid == 0) then
+        inquire(iolength=rlen) 1._rp
+        open(99,file='data/'//'grid_o.bin',access='direct',recl=4*no(3)*rlen)
+        write(99,rec=1) dzc_g(1:no(3)),dzf_g(1:no(3)),zco_g(1:no(3)),zfo_g(1:no(3))
+        close(99)
+      end if
+#endif
       inquire(iolength=rlen) 1._rp
       open(99,file=input_grid_file ,access='direct',recl=4*ni(3)*rlen)
       read(99,rec=1) bufi(1:ni(3)),bufi(1:ni(3)),zci_g(1:ni(3)),zfi_g(1:ni(3))
       close(99)
       open(99,file=output_grid_file,access='direct',recl=4*no(3)*rlen)
       read(99,rec=1) bufo(1:no(3)),bufo(1:no(3)),zco_g(1:no(3)),zfo_g(1:no(3))
-      close(99)
+      close(99) 
       zfi_g(0) = 0._rp
       zfo_g(0) = 0._rp
       zci_g(0) = -zci_g(1)

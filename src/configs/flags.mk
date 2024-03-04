@@ -60,3 +60,7 @@ endif
 ifeq ($(strip $(NON_UNIFORM_Z)),1)
 DEFINES += -D_NON_UNIFORM_Z
 endif
+
+ifeq ($(strip $(OUTPUT_GRID)),1)
+DEFINES += -D_OUTPUT_GRID
+endif
