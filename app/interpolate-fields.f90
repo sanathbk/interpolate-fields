@@ -2,24 +2,24 @@
     use mpi_f08
     use mod_common, only: rp,ierr,nh
     use mod_bound , only: makehalo,updthalo,set_bc
-    use mod_io    , only: load
+    use mod_io    , only: load,load_scal
     implicit none
     !
     ! input domain parameters
-    !
+  !
     real(rp), parameter,       dimension(3) :: l     = [8._rp,4._rp,2._rp]
     integer , parameter,       dimension(3) :: ni    = [256,128,180]
     integer , parameter,       dimension(3) :: no    = [512,128,200]
-    real(rp), parameter,       dimension(3) :: dli   = l(:)/ni(:)
     real(rp), parameter,       dimension(3) :: dlo   = l(:)/no(:)
+    real(rp), parameter,       dimension(3) :: dli   = l(:)/ni(:)
     !
-    ! boundary conditions
+ ! boundary conditions
     !
     ! velocity
     character(len=1), parameter, dimension(0:1,3,3) :: cbcvel = &
-      reshape(['P','P','P','P','P','P',  & ! u lower,upper bound in x,y,z
-               'P','P','P','P','P','P',  & ! v lower,upper bound in x,y,z
-               'P','P','P','P','P','P'], & ! w lower,upper bound in x,y,z
+      reshape(['P','P','P','P','D','D',  & ! u lower,upper bound in x,y,z
+               'P','P','P','P','D','D',  & ! v lower,upper bound in x,y,z
+               'P','P','P','P','D','D'], & ! w lower,upper bound in x,y,z
               shape(cbcvel))
     real(rp)        , parameter, dimension(0:1,3,3) ::  bcvel = &
         reshape([0._rp,0._rp,0._rp,0._rp,0._rp,0._rp,   &
@@ -29,21 +29,27 @@
     !
     ! pressure
     character(len=1), parameter, dimension(0:1,3) :: cbcpre = &
-      reshape(['P','P','P','P','P','P'],shape(cbcpre))
+      reshape(['P','P','P','P','N','N'],shape(cbcpre))
     real(rp)        , parameter, dimension(0:1,3) ::  bcpre = &
       reshape([0._rp,0._rp,0._rp,0._rp,0._rp,0._rp],shape(bcpre))
+
+      character(len=1), parameter, dimension(0:1,3) :: cbcscal = &
+      reshape(['P','P','P','P','D','D'],shape(cbcscal))
+    real(rp)        , parameter, dimension(0:1,3) ::  bcscal = &
+      reshape([0._rp,0._rp,0._rp,0._rp,0.995,1.005],shape(bcscal))
     !
     ! default BC, in case it is needed for another field; commented for now:
     !!character(len=1), parameter, dimension(0:1,3) :: cbc = cbcpre
     !!real(rp)        , parameter, dimension(0:1,3) :: bc  =  bcpre
     !
     ! file names
-    !
-    character(len=*), parameter             :: input_file  = 'data/fld_i.bin', &
-                                               output_file = 'data/fld_o.bin'
+      character(len=*), parameter             :: input_file       = 'data/fld_i.bin'     ,&
+                                                 output_file      = 'data/fld_o.bin'     ,&
+                                                 input_file_scal  = 'data/fld_scal_i.bin',&
+                                                 output_file_scal = 'data/fld_scal_o.bin'
 #ifdef _NON_UNIFORM_Z
-    character(len=*), parameter             :: input_grid_file  = 'data/grid_i.bin', &
-                                               output_grid_file = 'data/grid_o.bin'
+    character(len=*), parameter               :: input_grid_file  = 'data/grid_i.bin'    ,&
+                                                 output_grid_file = 'data/grid_o.bin'
 #endif
     !
     ! local problem sizes
@@ -61,9 +67,9 @@
     !
     ! computational variables
     !
-    real(rp), allocatable, dimension(:,:,:) :: ui,vi,wi,pi
-    real(rp), allocatable, dimension(:,:,:) :: uo,vo,wo,po
-    real(rp)                                :: time
+    real(rp), allocatable, dimension(:,:,:) :: ui,vi,wi,pi,si,dsdti,dsdti_t
+    real(rp), allocatable, dimension(:,:,:) :: uo,vo,wo,po,so,dsdto,dsdto_t
+    real(rp)                                :: time,P0
     integer                                 :: istep
     !
     ! other variables
@@ -96,10 +102,17 @@
              vi(1-nh:nni(1)+nh,1-nh:nni(2)+nh,1-nh:nni(3)+nh), &
              wi(1-nh:nni(1)+nh,1-nh:nni(2)+nh,1-nh:nni(3)+nh), &
              pi(1-nh:nni(1)+nh,1-nh:nni(2)+nh,1-nh:nni(3)+nh), &
+             si(1-nh:nni(1)+nh,1-nh:nni(2)+nh,1-nh:nni(3)+nh), &
+             dsdti               (1:nni(1),1:nni(2),1:nni(3)), &
              uo(1-nh:nno(1)+nh,1-nh:nno(2)+nh,1-nh:nno(3)+nh), &
              vo(1-nh:nno(1)+nh,1-nh:nno(2)+nh,1-nh:nno(3)+nh), &
              wo(1-nh:nno(1)+nh,1-nh:nno(2)+nh,1-nh:nno(3)+nh), &
-             po(1-nh:nno(1)+nh,1-nh:nno(2)+nh,1-nh:nno(3)+nh))
+             po(1-nh:nno(1)+nh,1-nh:nno(2)+nh,1-nh:nno(3)+nh), &
+             so(1-nh:nno(1)+nh,1-nh:nno(2)+nh,1-nh:nno(3)+nh), &
+             dsdto              (1:nno(1),1:nno(2),1:nno(3)))
+
+    allocate(dsdti_t(1-nh:nni(1)+nh,1-nh:nni(2)+nh,1-nh:nni(3)+nh), &
+             dsdto_t(1-nh:nno(1)+nh,1-nh:nno(2)+nh,1-nh:nno(3)+nh))
     !
     ! determine neighbors
     !
@@ -118,52 +131,69 @@
     ! read input data
     !
     call load('r',input_file,MPI_COMM_WORLD,myid,ni,[nh,nh,nh],lo_i,hi_i,ui,vi,wi,pi,time,istep)
+    call load_scal('r',input_file_scal,MPI_COMM_WORLD,myid,ni,[nh,nh,nh],lo_i,hi_i,si,dsdti,time,istep,P0)
     if(myid.eq.0) print*, 'Loaded field at time = ', time, 'step = ',istep,'.'
     !
     ! impose boundary conditions
+    !
+    dsdti_t(1:nni(1),1:nni(2),1:nni(3)) = dsdti(1:nni(1),1:nni(2),1:nni(3))
     !
     do idir = 1,3
       call updthalo(nh,halo(idir),nb(:,idir),idir,ui)
       call updthalo(nh,halo(idir),nb(:,idir),idir,vi)
       call updthalo(nh,halo(idir),nb(:,idir),idir,wi)
       call updthalo(nh,halo(idir),nb(:,idir),idir,pi)
+      call updthalo(nh,halo(idir),nb(:,idir),idir,si)
+      call updthalo(nh,halo(idir),nb(:,idir),idir,dsdti_t)
     end do
     !
     if(is_bound(0,1)) then
-      call set_bc(cbcvel(0,1,1),0,1,nh,.false.,bcvel(0,1,1),dli(1),ui)
-      call set_bc(cbcvel(0,1,2),0,1,nh,.true. ,bcvel(0,1,2),dli(1),vi)
-      call set_bc(cbcvel(0,1,3),0,1,nh,.true. ,bcvel(0,1,3),dli(1),wi)
-      call set_bc(cbcpre(0,1  ),0,1,nh,.true. ,bcpre(0,1  ),dli(1),pi)
+      call set_bc(cbcvel (0,1,1),0,1,nh,.false.,bcvel (0,1,1),dli(1),ui)
+      call set_bc(cbcvel (0,1,2),0,1,nh,.true. ,bcvel (0,1,2),dli(1),vi)
+      call set_bc(cbcvel (0,1,3),0,1,nh,.true. ,bcvel (0,1,3),dli(1),wi)
+      call set_bc(cbcpre (0,1  ),0,1,nh,.true. ,bcpre (0,1  ),dli(1),pi)
+      call set_bc(cbcscal(0,1  ),0,1,nh,.true. ,bcscal(0,1  ),dli(1),si)
+      call set_bc(cbcpre (0,1  ),0,1,nh,.true. ,bcpre (0,1  ),dli(1),dsdti_t)
     end if
     if(is_bound(1,1)) then
-      call set_bc(cbcvel(1,1,1),1,1,nh,.false.,bcvel(1,1,1),dli(1),ui)
-      call set_bc(cbcvel(1,1,2),1,1,nh,.true. ,bcvel(1,1,2),dli(1),vi)
-      call set_bc(cbcvel(1,1,3),1,1,nh,.true. ,bcvel(1,1,3),dli(1),wi)
-      call set_bc(cbcpre(1,1  ),1,1,nh,.true. ,bcpre(1,1  ),dli(1),pi)
+      call set_bc(cbcvel (1,1,1),1,1,nh,.false.,bcvel (1,1,1),dli(1),ui)
+      call set_bc(cbcvel (1,1,2),1,1,nh,.true. ,bcvel (1,1,2),dli(1),vi)
+      call set_bc(cbcvel (1,1,3),1,1,nh,.true. ,bcvel (1,1,3),dli(1),wi)
+      call set_bc(cbcpre (1,1  ),1,1,nh,.true. ,bcpre (1,1  ),dli(1),pi)
+      call set_bc(cbcscal(1,1  ),1,1,nh,.true. ,bcscal(1,1  ),dli(1),si)
+      call set_bc(cbcpre (1,1  ),1,1,nh,.true. ,bcpre (1,1  ),dli(1),dsdti_t)
     end if
     if(is_bound(0,2)) then
-      call set_bc(cbcvel(0,2,1),0,2,nh,.true. ,bcvel(0,2,1),dli(2),ui)
-      call set_bc(cbcvel(0,2,2),0,2,nh,.false.,bcvel(0,2,2),dli(2),vi)
-      call set_bc(cbcvel(0,2,3),0,2,nh,.true. ,bcvel(0,2,3),dli(2),wi)
-      call set_bc(cbcpre(0,2  ),0,2,nh,.true. ,bcpre(0,2  ),dli(2),pi)
+      call set_bc(cbcvel (0,2,1),0,2,nh,.true. ,bcvel (0,2,1),dli(2),ui)
+      call set_bc(cbcvel (0,2,2),0,2,nh,.false.,bcvel (0,2,2),dli(2),vi)
+      call set_bc(cbcvel (0,2,3),0,2,nh,.true. ,bcvel (0,2,3),dli(2),wi)
+      call set_bc(cbcpre (0,2  ),0,2,nh,.true. ,bcpre (0,2  ),dli(2),pi)
+      call set_bc(cbcscal(0,2  ),0,2,nh,.true. ,bcscal(0,2  ),dli(2),si)
+      call set_bc(cbcpre (0,2  ),0,2,nh,.true. ,bcpre (0,2  ),dli(2),dsdti_t)
      end if
     if(is_bound(1,2)) then
-      call set_bc(cbcvel(1,2,1),1,2,nh,.true. ,bcvel(1,2,1),dli(2),ui)
-      call set_bc(cbcvel(1,2,2),1,2,nh,.false.,bcvel(1,2,2),dli(2),vi)
-      call set_bc(cbcvel(1,2,3),1,2,nh,.true. ,bcvel(1,2,3),dli(2),wi)
-      call set_bc(cbcpre(1,2  ),1,2,nh,.true. ,bcpre(1,2  ),dli(2),pi)
+      call set_bc(cbcvel (1,2,1),1,2,nh,.true. ,bcvel (1,2,1),dli(2),ui)
+      call set_bc(cbcvel (1,2,2),1,2,nh,.false.,bcvel (1,2,2),dli(2),vi)
+      call set_bc(cbcvel (1,2,3),1,2,nh,.true. ,bcvel (1,2,3),dli(2),wi)
+      call set_bc(cbcpre (1,2  ),1,2,nh,.true. ,bcpre (1,2  ),dli(2),pi)
+      call set_bc(cbcscal(1,2  ),1,2,nh,.true. ,bcscal(1,2  ),dli(2),si)
+      call set_bc(cbcpre (1,2  ),1,2,nh,.true. ,bcpre (1,2  ),dli(2),dsdti_t)
     end if
     if(is_bound(0,3)) then
-      call set_bc(cbcvel(0,3,1),0,3,nh,.true. ,bcvel(0,3,1),dli(3),ui)
-      call set_bc(cbcvel(0,3,2),0,3,nh,.true. ,bcvel(0,3,2),dli(3),vi)
-      call set_bc(cbcvel(0,3,3),0,3,nh,.false.,bcvel(0,3,3),dli(3),wi)
-      call set_bc(cbcpre(0,3  ),0,3,nh,.true. ,bcpre(0,3  ),dli(3),pi)
+      call set_bc(cbcvel (0,3,1),0,3,nh,.true. ,bcvel (0,3,1),dli(3),ui)
+      call set_bc(cbcvel (0,3,2),0,3,nh,.true. ,bcvel (0,3,2),dli(3),vi)
+      call set_bc(cbcvel (0,3,3),0,3,nh,.false.,bcvel (0,3,3),dli(3),wi)
+      call set_bc(cbcpre (0,3  ),0,3,nh,.true. ,bcpre (0,3  ),dli(3),pi)
+      call set_bc(cbcscal(0,3  ),0,3,nh,.true. ,bcscal(0,3  ),dli(3),si)
+      call set_bc(cbcpre (0,3  ),0,3,nh,.true. ,bcpre (0,3  ),dli(3),dsdti_t)
     end if
     if(is_bound(1,3)) then
-      call set_bc(cbcvel(1,3,1),1,3,nh,.true. ,bcvel(1,3,1),dli(3),ui)
-      call set_bc(cbcvel(1,3,2),1,3,nh,.true. ,bcvel(1,3,2),dli(3),vi)
-      call set_bc(cbcvel(1,3,3),1,3,nh,.false.,bcvel(1,3,3),dli(3),wi)
-      call set_bc(cbcpre(1,3  ),1,3,nh,.true. ,bcpre(1,3  ),dli(3),pi)
+      call set_bc(cbcvel (1,3,1),1,3,nh,.true. ,bcvel (1,3,1),dli(3),ui)
+      call set_bc(cbcvel (1,3,2),1,3,nh,.true. ,bcvel (1,3,2),dli(3),vi)
+      call set_bc(cbcvel (1,3,3),1,3,nh,.false.,bcvel (1,3,3),dli(3),wi)
+      call set_bc(cbcpre (1,3  ),1,3,nh,.true. ,bcpre (1,3  ),dli(3),pi)
+      call set_bc(cbcscal(1,3  ),1,3,nh,.true. ,bcscal(1,3  ),dli(3),si)
+      call set_bc(cbcpre (1,3  ),1,3,nh,.true. ,bcpre (1,3  ),dli(3),dsdti_t)
     end if
 #ifdef _NON_UNIFORM_Z
     block
@@ -171,7 +201,7 @@
                                                        zfi  ,zfo  ,zci  ,zco
       integer :: k,kk,rlen
       !
-      allocate(bufi (1-nh:ni(3)+nh),bufo (1-nh:no(3)+nh))
+      allocate(bufi(1-nh:ni(3)+nh),bufo(1-nh:no(3)+nh))
       allocate(zci_g(1-nh:ni(3)+nh),zfi_g(1-nh:ni(3)+nh), &
                zco_g(1-nh:no(3)+nh),zfo_g(1-nh:no(3)+nh))
       inquire(iolength=rlen) 1._rp
@@ -210,6 +240,8 @@
       call interp_fld([.false.,.true. ,.false.],lo_i,lo_o,hi_o,dli,dlo,vi,vo,zci,zco)
       call interp_fld([.false.,.false.,.true. ],lo_i,lo_o,hi_o,dli,dlo,wi,wo,zfi,zfo)
       call interp_fld([.false.,.false.,.false.],lo_i,lo_o,hi_o,dli,dlo,pi,po,zci,zco)
+      call interp_fld([.false. ,.false.,.false.],lo_i,lo_o,hi_o,dli,dlo,si,so,zci,zco)
+      call interp_fld([.false. ,.false.,.false.],lo_i,lo_o,hi_o,dli,dlo,dsdti_t,dsdto_t,zci,zco)
     end block
 #else
     !
@@ -219,9 +251,14 @@
     call interp_fld([.false.,.true. ,.false.],lo_i,lo_o,hi_o,dli,dlo,vi,vo)
     call interp_fld([.false.,.false.,.true. ],lo_i,lo_o,hi_o,dli,dlo,wi,wo)
     call interp_fld([.false.,.false.,.false.],lo_i,lo_o,hi_o,dli,dlo,pi,po)
+    call interp_fld([.false. ,.false.,.false.],lo_i,lo_o,hi_o,dli,dlo,si,so)
+    call interp_fld([.false. ,.false.,.false.],lo_i,lo_o,hi_o,dli,dlo,dsdti_t,dsdto_t)
 #endif
     !
     call load('w',output_file,MPI_COMM_WORLD,myid,no,[nh,nh,nh],lo_o,hi_o,uo,vo,wo,po,time,istep)
+
+    call load_scal('w',output_file_scal,MPI_COMM_WORLD,myid,no,[nh,nh,nh],lo_o,hi_o,so,dsdto,time,istep,P0)
+
     call MPI_FINALIZE(ierr)
   contains
     subroutine interp_fld(is_staggered,lo_i,lo_o,hi_o,dli,dlo,fldi,fldo,z1di,z1do)
